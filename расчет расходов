@@ -1,0 +1,200 @@
+import json
+import os
+import re
+from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+DATA_FILE = "expenses.json"
+CATEGORIES = ["Еда", "Транспорт", "Развлечения", "Коммунальные услуги", "Здоровье", "Другое"]
+
+class ExpenseTracker:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Expense Tracker - Трекер расходов")
+        self.root.geometry("900x600")
+        self.expenses = []
+        self.load_data()
+        self.create_widgets()
+        self.refresh_table()
+
+    def create_widgets(self):
+        # Рамка ввода
+        input_frame = ttk.LabelFrame(self.root, text="Добавление расхода")
+        input_frame.pack(padx=10, pady=10, fill="x")
+
+        ttk.Label(input_frame, text="Сумма (₽):").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.amount_entry = ttk.Entry(input_frame, width=20)
+        self.amount_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(input_frame, text="Категория:").grid(row=0, column=2, padx=5, pady=5, sticky="e")
+        self.category_var = tk.StringVar(value=CATEGORIES[0])
+        self.category_combo = ttk.Combobox(input_frame, textvariable=self.category_var, values=CATEGORIES, width=15)
+        self.category_combo.grid(row=0, column=3, padx=5, pady=5)
+
+        ttk.Label(input_frame, text="Дата (ГГГГ-ММ-ДД):").grid(row=0, column=4, padx=5, pady=5, sticky="e")
+        self.date_entry = ttk.Entry(input_frame, width=12)
+        self.date_entry.grid(row=0, column=5, padx=5, pady=5)
+        self.date_entry.insert(0, datetime.today().strftime("%Y-%m-%d"))
+
+        add_btn = ttk.Button(input_frame, text="➕ Добавить расход", command=self.add_expense)
+        add_btn.grid(row=0, column=6, padx=10, pady=5)
+
+        # Рамка фильтрации
+        filter_frame = ttk.LabelFrame(self.root, text="Фильтрация")
+        filter_frame.pack(padx=10, pady=5, fill="x")
+
+        ttk.Label(filter_frame, text="Категория:").grid(row=0, column=0, padx=5, pady=5)
+        self.filter_category_var = tk.StringVar(value="Все")
+        self.filter_category_combo = ttk.Combobox(filter_frame, textvariable=self.filter_category_var,
+                                                   values=["Все"] + CATEGORIES, width=15)
+        self.filter_category_combo.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(filter_frame, text="Дата от (ГГГГ-ММ-ДД):").grid(row=0, column=2, padx=5, pady=5)
+        self.date_from_entry = ttk.Entry(filter_frame, width=12)
+        self.date_from_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        ttk.Label(filter_frame, text="до (ГГГГ-ММ-ДД):").grid(row=0, column=4, padx=5, pady=5)
+        self.date_to_entry = ttk.Entry(filter_frame, width=12)
+        self.date_to_entry.grid(row=0, column=5, padx=5, pady=5)
+
+        filter_btn = ttk.Button(filter_frame, text="🔍 Применить фильтр", command=self.refresh_table)
+        filter_btn.grid(row=0, column=6, padx=10, pady=5)
+
+        reset_btn = ttk.Button(filter_frame, text="🔄 Сбросить фильтр", command=self.reset_filter)
+        reset_btn.grid(row=0, column=7, padx=5, pady=5)
+
+        # Рамка суммы за период
+        sum_frame = ttk.LabelFrame(self.root, text="Сумма расходов за выбранный период")
+        sum_frame.pack(padx=10, pady=5, fill="x")
+
+        self.sum_label = ttk.Label(sum_frame, text="Итого: 0.00 ₽", font=("Arial", 14, "bold"))
+        self.sum_label.pack(pady=10)
+
+        # Таблица расходов
+        table_frame = ttk.Frame(self.root)
+        table_frame.pack(padx=10, pady=10, fill="both", expand=True)
+
+        columns = ("ID", "Дата", "Категория", "Сумма (₽)")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=150 if col != "Сумма (₽)" else 100)
+        self.tree.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        # Кнопка удаления
+        del_btn = ttk.Button(self.root, text="🗑 Удалить выбранный расход", command=self.delete_expense)
+        del_btn.pack(pady=5)
+
+    def validate_amount(self, amount_str):
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                raise ValueError("Сумма должна быть положительным числом")
+            return amount
+        except ValueError:
+            raise ValueError("Сумма должна быть положительным числом")
+
+    def validate_date(self, date_str):
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+            raise ValueError("Дата должна быть в формате ГГГГ-ММ-ДД")
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+            return date_str
+        except ValueError:
+            raise ValueError("Неверная дата (например, 2025-13-40 не подойдёт)")
+
+    def add_expense(self):
+        amount_str = self.amount_entry.get().strip()
+        category = self.category_var.get()
+        date_str = self.date_entry.get().strip()
+
+        try:
+            amount = self.validate_amount(amount_str)
+            date_str = self.validate_date(date_str)
+
+            new_id = max([e["id"] for e in self.expenses]) + 1 if self.expenses else 1
+            self.expenses.append({
+                "id": new_id,
+                "amount": amount,
+                "category": category,
+                "date": date_str
+            })
+            self.save_data()
+            self.refresh_table()
+            self.amount_entry.delete(0, tk.END)
+            messagebox.showinfo("Успех", f"Расход {amount} ₽ добавлен")
+        except ValueError as e:
+            messagebox.showerror("Ошибка ввода", str(e))
+
+    def delete_expense(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите расход для удаления")
+            return
+        item = self.tree.item(selected[0])
+        expense_id = int(item["values"][0])
+        self.expenses = [e for e in self.expenses if e["id"] != expense_id]
+        self.save_data()
+        self.refresh_table()
+        messagebox.showinfo("Успех", "Расход удалён")
+
+    def get_filtered_expenses(self):
+        filtered = self.expenses.copy()
+        cat_filter = self.filter_category_var.get()
+        if cat_filter != "Все":
+            filtered = [e for e in filtered if e["category"] == cat_filter]
+
+        date_from = self.date_from_entry.get().strip()
+        if date_from:
+            try:
+                self.validate_date(date_from)
+                filtered = [e for e in filtered if e["date"] >= date_from]
+            except ValueError:
+                pass
+
+        date_to = self.date_to_entry.get().strip()
+        if date_to:
+            try:
+                self.validate_date(date_to)
+                filtered = [e for e in filtered if e["date"] <= date_to]
+            except ValueError:
+                pass
+
+        return filtered
+
+    def refresh_table(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        filtered = self.get_filtered_expenses()
+        total = 0
+        for exp in filtered:
+            self.tree.insert("", tk.END, values=(exp["id"], exp["date"], exp["category"], f"{exp['amount']:.2f}"))
+            total += exp["amount"]
+
+        self.sum_label.config(text=f"Итого: {total:.2f} ₽")
+
+    def reset_filter(self):
+        self.filter_category_var.set("Все")
+        self.date_from_entry.delete(0, tk.END)
+        self.date_to_entry.delete(0, tk.END)
+        self.refresh_table()
+
+    def load_data(self):
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                self.expenses = json.load(f)
+
+    def save_data(self):
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(self.expenses, f, indent=4, ensure_ascii=False)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ExpenseTracker(root)
+    root.mainloop()
